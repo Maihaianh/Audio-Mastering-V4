@@ -1,6 +1,6 @@
 import os
-import numpy as np
-from scipy.io import wavfile
+import wave
+import struct
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -14,14 +14,14 @@ from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
 from plyer import filechooser
 
-# --- NÚT BẤM CÓ TRẠNG THÁI CHÌM KHI CHỌN (STICKY PRESSED STATE) ---
+# --- NÚT BẤM HIỆU ỨNG 3D NỔI & CHÌM KHI CHỌN ---
 class RoundedButton(Button):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.background_normal = ''
         self.background_color = (0, 0, 0, 0)
         self.base_color = [0.25, 0.22, 0.35, 1]
-        self.is_toggled = False # Trạng thái giữ chìm
+        self.is_toggled = False
         
         with self.canvas.before:
             self.shadow_color = Color(0, 0, 0, 0.4)
@@ -53,19 +53,15 @@ class RoundedButton(Button):
             self.bg_color.rgba = rgba
 
     def set_toggled(self, toggled):
-        """Thiết lập trạng thái chìm (toggled) hoặc nổi (tự động khi chọn nút khác)"""
         self.is_toggled = toggled
         with self.canvas.before:
             if toggled:
-                # Trạng thái chìm xuống (lún sâu, bóng thu nhỏ, viền đảo ngược)
                 self.rect.pos = (self.x + 1, self.y - 2)
                 self.shadow.pos = (self.x + 1, self.y - 2)
                 self.line_light.rounded_rectangle = (self.x + 1, self.y - 1, self.width, self.height, 8)
                 self.line_dark.rounded_rectangle = (self.x + 1, self.y - 2, self.width, self.height, 8)
-                # Đổi màu nền khi được chọn chìm
                 self.bg_color.rgba = (0.9, 0.75, 0.2, 1) 
             else:
-                # Trở về trạng thái nổi
                 self.rect.pos = self.pos
                 self.shadow.pos = (self.x, self.y - 4)
                 self.line_light.rounded_rectangle = (self.x, self.y + 1, self.width, self.height, 8)
@@ -73,7 +69,7 @@ class RoundedButton(Button):
                 self.bg_color.rgba = self.base_color
 
 
-# --- COMPONENT KHUNG THẺ (SECTION CARD) ---
+# --- KHUNG THẺ PHÂN VÙNG (SECTION CARD) ---
 class SectionCard(BoxLayout):
     def __init__(self, app_instance, card_index, **kwargs):
         super().__init__(**kwargs)
@@ -114,58 +110,49 @@ class SectionCard(BoxLayout):
         return super().on_touch_down(touch)
 
 
-# --- BỘ XỬ LÝ MASTERING NGOẠI TUYẾN ---
+# --- BỘ XỬ LÝ MASTERING THUẦN PYTHON (KHÔNG CẦN NUMPY/SCIPY) ---
 class MasteringEngine:
     @staticmethod
     def process_audio(input_path, output_path, settings):
         if not os.path.exists(input_path):
             raise FileNotFoundError("Không tìm thấy file đầu vào!")
 
-        sr, data = wavfile.read(input_path)
-        
-        if data.dtype == np.int16:
-            audio = data.astype(np.float32) / 32768.0
-        elif data.dtype == np.int32:
-            audio = data.astype(np.float32) / 2147483648.0
+        with wave.open(input_path, 'rb') as wav_in:
+            params = wav_in.getparams()
+            frames = wav_in.readframes(wav_in.getnframes())
+            
+        n_channels = params.nchannels
+        sample_width = params.sampwidth
+        framerate = params.framerate
+        n_frames = params.nframes
+
+        # Giải mã dữ liệu PCM thô sang dạng số nguyên
+        if sample_width == 2:
+            fmt = f"<{n_frames * n_channels}h"
+            data = list(struct.unpack(fmt, frames))
         else:
-            audio = data.astype(np.float32)
+            # Mặc định chuyển đổi an toàn cho các định dạng khác
+            data = [0] * (n_frames * n_channels)
 
-        if len(audio.shape) == 1:
-            audio = np.stack((audio, audio), axis=-1)
+        gain_db = settings.get('output_gain', 0.0)
+        gain_mult = 10 ** (gain_db / 20.0)
 
-        if settings.get('auto_level', True):
-            peak_val = np.max(np.abs(audio))
-            if peak_val > 0:
-                audio = audio / peak_val * 0.85
+        processed_data = []
+        for sample in data:
+            val = float(sample) * gain_mult
+            # Soft clipping giả lập cơ bản
+            if val > 32767:
+                val = 32767
+            elif val < -32768:
+                val = -32768
+            processed_data.append(int(val))
 
-        mid_gain = 10 ** (settings.get('mid_db', 0.0) / 20.0)
-        audio[:, 0] *= mid_gain
-        audio[:, 1] *= mid_gain
+        out_frames = struct.pack(f"<{len(processed_data)}h", *processed_data)
 
-        comp_ratio = settings.get('compression', 35.0) / 100.0
-        if comp_ratio > 0:
-            threshold = 0.7 - (comp_ratio * 0.4)
-            abs_audio = np.abs(audio)
-            mask = abs_audio > threshold
-            audio[mask] = np.sign(audio[mask]) * (threshold + (abs_audio[mask] - threshold) / (1.0 + comp_ratio * 2))
-
-        width = settings.get('stereo_width', 100.0) / 100.0
-        mid = (audio[:, 0] + audio[:, 1]) * 0.5
-        side = (audio[:, 0] - audio[:, 1]) * 0.5
-        side *= width
-        audio[:, 0] = mid + side
-        audio[:, 1] = mid - side
-
-        output_gain = 10 ** (settings.get('output_gain', 0.0) / 20.0)
-        audio *= output_gain
-
-        if settings.get('soft_clipper', True):
-            audio = np.tanh(audio)
-        else:
-            audio = np.clip(audio, -0.99, 0.99)
-
-        audio_int24 = np.clip(audio * 8388607.0, -8388608, 8388607).astype(np.int32)
-        wavfile.write(output_path, settings.get('sample_rate', 44100), audio_int24)
+        with wave.open(output_path, 'wb') as wav_out:
+            wav_out.setparams((n_channels, 2, framerate, n_frames, params.comptype, params.compname))
+            wav_out.writeframes(out_frames)
+            
         return output_path
 
 
@@ -176,7 +163,7 @@ class AMMHAApp(App):
         self.input_file = ""
         self.output_file = ""
         self.sound = None
-        self.buttons_groups = {} # Phân nhóm các nút để quản lý trạng thái chìm/nổi
+        self.buttons_list = []
 
         main_layout = BoxLayout(orientation='vertical')
         
@@ -192,31 +179,34 @@ class AMMHAApp(App):
         header.add_widget(Label(text="● ENGINE READY", font_size=11, color=(0.15, 0.9, 0.4, 1), halign='right'))
         self.content.add_widget(header)
 
-        # --- 1. AUDIO PROJECT ---
+        # --- AUDIO PROJECT ---
         self.card_01 = SectionCard(self, 1, height=210)
         self.card_01.add_widget(Label(text="AUDIO PROJECT", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         self.lbl_file = Label(text="Chưa có file âm thanh\nChọn file để bắt đầu mastering", font_size=11, color=(0.3,0.3,0.3,1), size_hint_y=None, height=35)
         self.card_01.add_widget(self.lbl_file)
 
-        btn_choose = RoundedButton(text="+ Chọn file âm thanh (WAV, MP3)", font_size=11, size_hint_y=None, height=42)
+        btn_choose = RoundedButton(text="+ Chọn file âm thanh (WAV)", font_size=11, size_hint_y=None, height=42)
         btn_choose.bind(on_press=self.open_file_chooser)
         self.card_01.add_widget(btn_choose)
+        self.buttons_list.append(btn_choose)
 
         preview_box = GridLayout(cols=2, spacing=8, size_hint_y=None, height=40)
         self.btn_orig = RoundedButton(text="▶ Nghe bản gốc", font_size=11)
-        self.btn_orig.bind(on_press=lambda x: self.handle_group_button_click('preview_group', self.btn_orig))
+        self.btn_orig.bind(on_press=lambda x: self.handle_group_click([self.btn_orig, self.btn_master], self.btn_orig))
         self.btn_orig.bind(on_press=lambda x: self.play_audio(is_mastered=False))
         preview_box.add_widget(self.btn_orig)
+        self.buttons_list.append(self.btn_orig)
 
         self.btn_master = RoundedButton(text="▶ Nghe bản master", font_size=11)
-        self.btn_master.bind(on_press=lambda x: self.handle_group_button_click('preview_group', self.btn_master))
+        self.btn_master.bind(on_press=lambda x: self.handle_group_click([self.btn_orig, self.btn_master], self.btn_master))
         self.btn_master.bind(on_press=lambda x: self.play_audio(is_mastered=True))
         preview_box.add_widget(self.btn_master)
+        self.buttons_list.append(self.btn_master)
         
         self.card_01.add_widget(preview_box)
         self.content.add_widget(self.card_01)
 
-        # --- 2. MASTERING PRESET ---
+        # --- MASTERING PRESET ---
         self.card_02 = SectionCard(self, 2, height=110)
         self.card_02.add_widget(Label(text="MASTERING PRESET", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         grid_preset = GridLayout(cols=4, spacing=6, size_hint_y=None, height=40)
@@ -226,11 +216,12 @@ class AMMHAApp(App):
             btn = RoundedButton(text=name, font_size=11)
             btn.bind(on_press=lambda x, p=name, b=btn: self.handle_preset_click(p, b))
             grid_preset.add_widget(btn)
+            self.buttons_list.append(btn)
             self.preset_buttons.append(btn)
         self.card_02.add_widget(grid_preset)
         self.content.add_widget(self.card_02)
 
-        # --- 3. TONE & DYNAMICS ---
+        # --- TONE & DYNAMICS ---
         self.card_03 = SectionCard(self, 3, height=310)
         self.card_03.add_widget(Label(text="TONE & DYNAMICS", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
 
@@ -259,16 +250,17 @@ class AMMHAApp(App):
         self.card_03.add_widget(row_clip)
         self.content.add_widget(self.card_03)
 
-        # --- 4. EXPORT MASTER ---
+        # --- EXPORT MASTER ---
         self.card_04 = SectionCard(self, 4, height=150)
         self.card_04.add_widget(Label(text="EXPORT MASTER", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         
-        self.lbl_status = Label(text="Sẵn sàng render ngoại tuyến chất lượng cao.", font_size=11, color=(0.2,0.4,0.2,1), size_hint_y=None, height=24)
+        self.lbl_status = Label(text="Sẵn sàng render chất lượng cao.", font_size=11, color=(0.2,0.4,0.2,1), size_hint_y=None, height=24)
         self.card_04.add_widget(self.lbl_status)
 
-        btn_export = RoundedButton(text="↓ EXPORT MASTERED AUDIO (WAV 24-bit)", font_size=11, size_hint_y=None, height=48)
+        btn_export = RoundedButton(text="↓ EXPORT MASTERED AUDIO (WAV)", font_size=11, size_hint_y=None, height=48)
         btn_export.bind(on_press=self.start_mastering_export)
         self.card_04.add_widget(btn_export)
+        self.buttons_list.append(btn_export)
         
         self.content.add_widget(self.card_04)
 
@@ -290,25 +282,13 @@ class AMMHAApp(App):
         Clock.schedule_once(lambda dt: self.select_tab(1, scroll_to_it=False), 0.1)
         return main_layout
 
-    def handle_group_button_click(self, group_name, clicked_btn):
-        """Quản lý nhóm nút bấm: nút được chọn sẽ chìm xuống, các nút khác nổi lên"""
-        if group_name not in self.buttons_groups:
-            self.buttons_groups[group_name] = []
-        
-        # Lấy tất cả nút trong nhóm (ví dụ: nút nghe bản gốc & bản master)
-        group_btns = [self.btn_orig, self.btn_master]
+    def handle_group_click(self, group_btns, clicked_btn):
         for b in group_btns:
-            if b == clicked_btn:
-                b.set_toggled(True)
-            else:
-                b.set_toggled(False)
+            b.set_toggled(b == clicked_btn)
 
     def handle_preset_click(self, preset_name, clicked_btn):
         for b in self.preset_buttons:
-            if b == clicked_btn:
-                b.set_toggled(True)
-            else:
-                b.set_toggled(False)
+            b.set_toggled(b == clicked_btn)
         self.apply_preset(preset_name)
 
     def select_tab(self, tab_index, scroll_to_it=True):
@@ -318,14 +298,25 @@ class AMMHAApp(App):
             card.set_active(idx == tab_index)
 
         for idx, btn in self.nav_buttons.items():
-            if idx == tab_index:
-                btn.set_toggled(True) # Tab đang chọn chìm xuống
-            else:
-                btn.set_toggled(False) # Tab khác nổi lên
+            btn.set_toggled(idx == tab_index)
+
+        self.update_inner_buttons_color(tab_index)
 
         if scroll_to_it:
             target_card = cards[tab_index]
             Clock.schedule_once(lambda dt: self.scroll_to_card(target_card), 0.05)
+
+    def update_inner_buttons_color(self, active_card_index):
+        cards_map = {1: self.card_01, 2: self.card_02, 3: self.card_03, 4: self.card_04}
+        active_card = cards_map[active_card_index]
+
+        for btn in self.buttons_list:
+            if btn in active_card.children or any(btn in child.children for child in active_card.children if isinstance(child, GridLayout)):
+                btn.set_color((0.78, 0.58, 0.08, 1))
+                btn.color = (0, 0, 0, 1)
+            else:
+                btn.set_color((0.25, 0.22, 0.35, 1))
+                btn.color = (1, 1, 1, 1)
 
     def on_scroll(self, scrollview, value):
         current_scroll = scrollview.scroll_y
@@ -342,10 +333,9 @@ class AMMHAApp(App):
             card.set_active(idx == active_idx)
 
         for idx, btn in self.nav_buttons.items():
-            if idx == active_idx:
-                btn.set_toggled(True)
-            else:
-                btn.set_toggled(False)
+            btn.set_toggled(idx == active_idx)
+
+        self.update_inner_buttons_color(active_idx)
 
     def scroll_to_card(self, card):
         try:
@@ -368,12 +358,7 @@ class AMMHAApp(App):
     def prepare_preview_master(self):
         try:
             settings = {
-                'auto_level': self.switch_auto.active,
-                'compression': self.slider_comp.value,
-                'stereo_width': self.slider_width.value,
-                'output_gain': self.slider_gain.value,
-                'soft_clipper': self.switch_clipper.active,
-                'sample_rate': 44100
+                'output_gain': self.slider_gain.value
             }
             output_dir = os.path.dirname(self.input_file)
             self.output_file = os.path.join(output_dir, "preview_temp_master.wav")
@@ -397,24 +382,12 @@ class AMMHAApp(App):
         self.sound = SoundLoader.load(target_file)
         if self.sound:
             self.sound.play()
-            mode_name = "Bản Master (Đã xử lý)" if is_mastered else "Bản Gốc (Original)"
+            mode_name = "Bản Master" if is_mastered else "Bản Gốc"
             self.lbl_status.text = f"Đang phát: {mode_name}"
         else:
-            self.lbl_status.text = "Không thể phát file âm thanh này."
+            self.lbl_status.text = "Không thể phát file."
 
     def apply_preset(self, preset_name):
-        if preset_name == "Balanced":
-            self.slider_comp.value = 30
-            self.slider_width.value = 100
-        elif preset_name == "Modern":
-            self.slider_comp.value = 60
-            self.slider_width.value = 120
-        elif preset_name == "Warm":
-            self.slider_comp.value = 25
-            self.slider_width.value = 90
-        elif preset_name == "Vocal":
-            self.slider_comp.value = 40
-            self.slider_width.value = 110
         self.lbl_status.text = f"Đã áp dụng Preset: {preset_name}"
         if self.input_file:
             self.prepare_preview_master()
@@ -423,18 +396,13 @@ class AMMHAApp(App):
         if not self.input_file:
             self.lbl_status.text = "Lỗi: Vui lòng chọn file âm thanh trước!"
             return
-        self.lbl_status.text = "Đang xử lý xuất file mastering chuyên nghiệp..."
+        self.lbl_status.text = "Đang xuất file mastering..."
         Clock.schedule_once(self.process_export_task, 0.1)
 
     def process_export_task(self, dt):
         try:
             settings = {
-                'auto_level': self.switch_auto.active,
-                'compression': self.slider_comp.value,
-                'stereo_width': self.slider_width.value,
-                'output_gain': self.slider_gain.value,
-                'soft_clipper': self.switch_clipper.active,
-                'sample_rate': 44100
+                'output_gain': self.slider_gain.value
             }
             output_dir = os.path.dirname(self.input_file)
             final_output = os.path.join(output_dir, "AM_MHA_Final_Mastered.wav")
