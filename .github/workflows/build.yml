@@ -8,7 +8,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
-    # Sử dụng trực tiếp Docker image chính thức của Buildozer
     container:
       image: kivy/buildozer
 
@@ -22,7 +21,7 @@ jobs:
 
     - name: Run Buildozer
       run: |
-        buildozer -v android debug
+        yes | buildozer -v android debug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
