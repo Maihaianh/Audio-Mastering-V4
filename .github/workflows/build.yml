@@ -7,20 +7,25 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # Sử dụng trực tiếp Docker image chính thức của Buildozer
+    container:
+      image: kivy/buildozer
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Build with Buildozer
-      uses: ArtemSBulgakov/buildozer-action@v1
-      id: buildozer
-      with:
-        command: buildozer android debug
-        buildozer_version: stable
+    - name: Fix Git Safe Directory
+      run: |
+        git config --global --add safe.directory '*'
+
+    - name: Run Buildozer
+      run: |
+        buildozer -v android debug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: package
-        path: ${{ steps.buildozer.outputs.filename }}
+        name: ammha-pro-apk
+        path: bin/*.apk
