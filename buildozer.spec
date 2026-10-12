@@ -1,5 +1,4 @@
 [app]
-
 title = AM-MHA Pro Audio Mastering
 package.name = ammhapro
 package.domain = org.ammha
@@ -7,7 +6,7 @@ version = 1.0
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 
-# Đã tối ưu requirements để build APK thành công mượt mà
+# Chỉ giữ lại các thư viện tương thích tuyệt đối trên Android
 requirements = python3,kivy,plyer,sdl2
 
 orientation = portrait
