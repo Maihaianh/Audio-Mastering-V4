@@ -36,6 +36,9 @@ android.minapi = 21
 # (str) Android architectural build types
 android.archs = arm64-v8a, armeabi-v7a
 
+# (str) Version of Android NDK to use
+android.ndk = 25b
+
 [buildozer]
 log_level = 2
 warn_on_root = 1
