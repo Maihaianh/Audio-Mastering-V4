@@ -14,14 +14,14 @@ from kivy.clock import Clock
 from kivy.core.audio import SoundLoader
 from plyer import filechooser
 
-# --- NÚT BẤM CÓ TRẠNG THÁI CHÌM KHI CHỌN (STICKY PRESSED STATE) ---
+# --- NÚT BẤM HIỆU ỨNG 3D NỔI & CHÌM KHI CHỌN ---
 class RoundedButton(Button):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.background_normal = ''
         self.background_color = (0, 0, 0, 0)
         self.base_color = [0.25, 0.22, 0.35, 1]
-        self.is_toggled = False # Trạng thái giữ chìm
+        self.is_toggled = False
         
         with self.canvas.before:
             self.shadow_color = Color(0, 0, 0, 0.4)
@@ -53,19 +53,15 @@ class RoundedButton(Button):
             self.bg_color.rgba = rgba
 
     def set_toggled(self, toggled):
-        """Thiết lập trạng thái chìm (toggled) hoặc nổi (tự động khi chọn nút khác)"""
         self.is_toggled = toggled
         with self.canvas.before:
             if toggled:
-                # Trạng thái chìm xuống (lún sâu, bóng thu nhỏ, viền đảo ngược)
                 self.rect.pos = (self.x + 1, self.y - 2)
                 self.shadow.pos = (self.x + 1, self.y - 2)
                 self.line_light.rounded_rectangle = (self.x + 1, self.y - 1, self.width, self.height, 8)
                 self.line_dark.rounded_rectangle = (self.x + 1, self.y - 2, self.width, self.height, 8)
-                # Đổi màu nền khi được chọn chìm
                 self.bg_color.rgba = (0.9, 0.75, 0.2, 1) 
             else:
-                # Trở về trạng thái nổi
                 self.rect.pos = self.pos
                 self.shadow.pos = (self.x, self.y - 4)
                 self.line_light.rounded_rectangle = (self.x, self.y + 1, self.width, self.height, 8)
@@ -73,7 +69,7 @@ class RoundedButton(Button):
                 self.bg_color.rgba = self.base_color
 
 
-# --- COMPONENT KHUNG THẺ (SECTION CARD) ---
+# --- KHUNG THẺ PHÂN VÙNG (SECTION CARD) ---
 class SectionCard(BoxLayout):
     def __init__(self, app_instance, card_index, **kwargs):
         super().__init__(**kwargs)
@@ -102,10 +98,10 @@ class SectionCard(BoxLayout):
         self.is_active = active
         with self.canvas.before:
             if active:
-                self.bg_color.rgba = (0.85, 0.7, 0.15, 1)
+                self.bg_color.rgba = (0.85, 0.7, 0.15, 1) # Vàng gold
                 self.border_color.rgba = (1.0, 0.9, 0.3, 1)
             else:
-                self.bg_color.rgba = (0.12, 0.1, 0.17, 1)
+                self.bg_color.rgba = (0.12, 0.1, 0.17, 1) # Tối ban đầu
                 self.border_color.rgba = (0.28, 0.25, 0.4, 1)
 
     def on_touch_down(self, touch):
@@ -176,7 +172,7 @@ class AMMHAApp(App):
         self.input_file = ""
         self.output_file = ""
         self.sound = None
-        self.buttons_groups = {} # Phân nhóm các nút để quản lý trạng thái chìm/nổi
+        self.buttons_list = []
 
         main_layout = BoxLayout(orientation='vertical')
         
@@ -192,7 +188,7 @@ class AMMHAApp(App):
         header.add_widget(Label(text="● ENGINE READY", font_size=11, color=(0.15, 0.9, 0.4, 1), halign='right'))
         self.content.add_widget(header)
 
-        # --- 1. AUDIO PROJECT ---
+        # --- AUDIO PROJECT ---
         self.card_01 = SectionCard(self, 1, height=210)
         self.card_01.add_widget(Label(text="AUDIO PROJECT", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         self.lbl_file = Label(text="Chưa có file âm thanh\nChọn file để bắt đầu mastering", font_size=11, color=(0.3,0.3,0.3,1), size_hint_y=None, height=35)
@@ -201,22 +197,25 @@ class AMMHAApp(App):
         btn_choose = RoundedButton(text="+ Chọn file âm thanh (WAV, MP3)", font_size=11, size_hint_y=None, height=42)
         btn_choose.bind(on_press=self.open_file_chooser)
         self.card_01.add_widget(btn_choose)
+        self.buttons_list.append(btn_choose)
 
         preview_box = GridLayout(cols=2, spacing=8, size_hint_y=None, height=40)
         self.btn_orig = RoundedButton(text="▶ Nghe bản gốc", font_size=11)
-        self.btn_orig.bind(on_press=lambda x: self.handle_group_button_click('preview_group', self.btn_orig))
+        self.btn_orig.bind(on_press=lambda x: self.handle_group_click([self.btn_orig, self.btn_master], self.btn_orig))
         self.btn_orig.bind(on_press=lambda x: self.play_audio(is_mastered=False))
         preview_box.add_widget(self.btn_orig)
+        self.buttons_list.append(self.btn_orig)
 
         self.btn_master = RoundedButton(text="▶ Nghe bản master", font_size=11)
-        self.btn_master.bind(on_press=lambda x: self.handle_group_button_click('preview_group', self.btn_master))
+        self.btn_master.bind(on_press=lambda x: self.handle_group_click([self.btn_orig, self.btn_master], self.btn_master))
         self.btn_master.bind(on_press=lambda x: self.play_audio(is_mastered=True))
         preview_box.add_widget(self.btn_master)
+        self.buttons_list.append(self.btn_master)
         
         self.card_01.add_widget(preview_box)
         self.content.add_widget(self.card_01)
 
-        # --- 2. MASTERING PRESET ---
+        # --- MASTERING PRESET ---
         self.card_02 = SectionCard(self, 2, height=110)
         self.card_02.add_widget(Label(text="MASTERING PRESET", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         grid_preset = GridLayout(cols=4, spacing=6, size_hint_y=None, height=40)
@@ -226,11 +225,12 @@ class AMMHAApp(App):
             btn = RoundedButton(text=name, font_size=11)
             btn.bind(on_press=lambda x, p=name, b=btn: self.handle_preset_click(p, b))
             grid_preset.add_widget(btn)
+            self.buttons_list.append(btn)
             self.preset_buttons.append(btn)
         self.card_02.add_widget(grid_preset)
         self.content.add_widget(self.card_02)
 
-        # --- 3. TONE & DYNAMICS ---
+        # --- TONE & DYNAMICS ---
         self.card_03 = SectionCard(self, 3, height=310)
         self.card_03.add_widget(Label(text="TONE & DYNAMICS", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
 
@@ -259,7 +259,7 @@ class AMMHAApp(App):
         self.card_03.add_widget(row_clip)
         self.content.add_widget(self.card_03)
 
-        # --- 4. EXPORT MASTER ---
+        # --- EXPORT MASTER ---
         self.card_04 = SectionCard(self, 4, height=150)
         self.card_04.add_widget(Label(text="EXPORT MASTER", bold=True, color=(0.2, 0.2, 0.2, 1), font_size=13, size_hint_y=None, height=22, halign='left'))
         
@@ -269,6 +269,7 @@ class AMMHAApp(App):
         btn_export = RoundedButton(text="↓ EXPORT MASTERED AUDIO (WAV 24-bit)", font_size=11, size_hint_y=None, height=48)
         btn_export.bind(on_press=self.start_mastering_export)
         self.card_04.add_widget(btn_export)
+        self.buttons_list.append(btn_export)
         
         self.content.add_widget(self.card_04)
 
@@ -290,25 +291,13 @@ class AMMHAApp(App):
         Clock.schedule_once(lambda dt: self.select_tab(1, scroll_to_it=False), 0.1)
         return main_layout
 
-    def handle_group_button_click(self, group_name, clicked_btn):
-        """Quản lý nhóm nút bấm: nút được chọn sẽ chìm xuống, các nút khác nổi lên"""
-        if group_name not in self.buttons_groups:
-            self.buttons_groups[group_name] = []
-        
-        # Lấy tất cả nút trong nhóm (ví dụ: nút nghe bản gốc & bản master)
-        group_btns = [self.btn_orig, self.btn_master]
+    def handle_group_click(self, group_btns, clicked_btn):
         for b in group_btns:
-            if b == clicked_btn:
-                b.set_toggled(True)
-            else:
-                b.set_toggled(False)
+            b.set_toggled(b == clicked_btn)
 
     def handle_preset_click(self, preset_name, clicked_btn):
         for b in self.preset_buttons:
-            if b == clicked_btn:
-                b.set_toggled(True)
-            else:
-                b.set_toggled(False)
+            b.set_toggled(b == clicked_btn)
         self.apply_preset(preset_name)
 
     def select_tab(self, tab_index, scroll_to_it=True):
@@ -318,14 +307,25 @@ class AMMHAApp(App):
             card.set_active(idx == tab_index)
 
         for idx, btn in self.nav_buttons.items():
-            if idx == tab_index:
-                btn.set_toggled(True) # Tab đang chọn chìm xuống
-            else:
-                btn.set_toggled(False) # Tab khác nổi lên
+            btn.set_toggled(idx == tab_index)
+
+        self.update_inner_buttons_color(tab_index)
 
         if scroll_to_it:
             target_card = cards[tab_index]
             Clock.schedule_once(lambda dt: self.scroll_to_card(target_card), 0.05)
+
+    def update_inner_buttons_color(self, active_card_index):
+        cards_map = {1: self.card_01, 2: self.card_02, 3: self.card_03, 4: self.card_04}
+        active_card = cards_map[active_card_index]
+
+        for btn in self.buttons_list:
+            if btn in active_card.children or any(btn in child.children for child in active_card.children if isinstance(child, GridLayout)):
+                btn.set_color((0.78, 0.58, 0.08, 1))
+                btn.color = (0, 0, 0, 1)
+            else:
+                btn.set_color((0.25, 0.22, 0.35, 1))
+                btn.color = (1, 1, 1, 1)
 
     def on_scroll(self, scrollview, value):
         current_scroll = scrollview.scroll_y
@@ -342,10 +342,9 @@ class AMMHAApp(App):
             card.set_active(idx == active_idx)
 
         for idx, btn in self.nav_buttons.items():
-            if idx == active_idx:
-                btn.set_toggled(True)
-            else:
-                btn.set_toggled(False)
+            btn.set_toggled(idx == active_idx)
+
+        self.update_inner_buttons_color(active_idx)
 
     def scroll_to_card(self, card):
         try:
