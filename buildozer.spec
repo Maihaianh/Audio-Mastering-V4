@@ -9,6 +9,9 @@ package.name = ammhapro
 # (str) Package domain (needed for android packaging)
 package.domain = org.ammha
 
+# (str) Version of the application
+version = 1.0
+
 # (str) Source files where the let it be in main directory (.)
 source.dir = .
 
